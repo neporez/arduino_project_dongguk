@@ -27,7 +27,7 @@ float temperature;
 const char*ssid = "wifi-name"; //접속할 와이파이 이름
 const char*password = "wifi-password";//접속할 와이파이 비밀번호
 
-String APIKEY = "86935eef7f8345573b4384997257271e" //API KEY
+String APIKEY = "API KEY" //API KEY
 String CityID = "1835848";//Seoul,KR
 
 int soundSensor = A0; //사운드 센서
