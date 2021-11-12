@@ -28,7 +28,6 @@ WiFiClient client; //클라이언트 객체 선언
 
 char servername[] = "api.openweathermap.org" //클라이언트가 접속할 서버이름
 
-String APIKEY = "API KEY" //API KEY
 String CityID = "1835848";//Seoul,KR
 
 String result; //API 데이터를 모두 긁어와 저장하는 변수
