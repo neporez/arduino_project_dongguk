@@ -1,0 +1,9 @@
+200대 : Thunderstorm
+
+300, 500대: Rain
+
+600대 : Snow
+
+800: Clear
+
+700 ,80x: clouds
