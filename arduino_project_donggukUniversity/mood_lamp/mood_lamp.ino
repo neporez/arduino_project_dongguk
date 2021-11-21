@@ -283,8 +283,7 @@ void ISR_API_Client() {
   }
   //API 정보 가져오기
   client.stop();
-  result.replace('[',' ');
-  result.replace(']',' ');
+  
   Serial.println(result);
 
   char jsonArray [result.length()+1];
@@ -299,9 +298,9 @@ void ISR_API_Client() {
   //JsonArray 형태로 데이터 정리
   String location = root["name"];
   String country = root["sys"]["country"];
-  String description = root["weather"]["description"];
+  String description = root["weather"][0]["description"];
   float _temperature = root["main"]["temp"];
-  int ID = root["weather"]["id"];
+  int ID = root["weather"][0]["id"];
 
 
 
