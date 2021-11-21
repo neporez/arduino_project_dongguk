@@ -1,6 +1,7 @@
 
 /*
- ESP8266을 구매하였으면 툴->포트 확인!!, 드라이버 CH340(설치완료)->문제 생길수도 있음
+ *본 저작물은 '한국환경공단'에서 실시간 제공하는 '한국환경공단_에어코리아_대기오염정보'를 이용하였습니다.
+ *https://www.data.go.kr/tcs/dss/selectApiDataDetailView.do?publicDataPk=15073861
  */
 
 /*************************HEADER****************************/
@@ -16,9 +17,8 @@
 
 AdafruitIO_Feed *moodlamp = io.feed("moodlamp"); //Adafruit io On/Off
 AdafruitIO_Feed *temp = io.feed("temperature"); //Adafruit io temperature
-AdafruitIO_Feed *prec = io.feed("temperature"); //Adafruit io temperature
-AdafruitIO_Feed *humd = io.feed("humidity"); //Adafruit io humidity
-AdafruitIO_Feed *icon = io.feed("weatherIcon");//Adafruit io weatherIcon
+AdafruitIO_Feed *moodlampMode = io.feed("mode"); //Adafruit io moodlampMode
+
 
 /**********************************************************/
 
@@ -29,11 +29,11 @@ bool timeCheck_timer= true;
 /**********************************************************/
 
 /***********API 관련 변수******************/
-const String API_KEY = "86935eef7f8345573b4384997257271e";
-
 WiFiClient client; //클라이언트 객체 선언
 
 char servername[] = "api.openweathermap.org"; //클라이언트가 접속할 서버이름
+char servername_pt[] = "apis.data.go.kr";
+
 
 String CityID = "1835848";//Seoul,KR
 
@@ -41,10 +41,18 @@ String CityID = "1835848";//Seoul,KR
 String weatherDescripton =""; //관측하고 있는 도시 날씨의 자세한 설명
 String weatherLocation ="";//관측하고 있는 도시
 String weatherCountry;//관측하고 있는 국가
+String weatherDate; //관측하고 있는 시간
 float temperature;//관측하고 있는 도시의 온도
-float precipitation;//관측하고 있는 도시의 강수량(비,눈 안올시 0)
-int weatherID;
+int weatherID; //날씨 상태
 
+
+#define CURRENT_WEATHER "current weather"
+#define HOURLY_FORECAST "hourly forecast"
+#define PARTICULATE_MATTER "particulate_matter"
+
+int hourly_forecast_time = 0;
+
+int particulate_state = 0;
 
 /******************************************/
 
@@ -81,12 +89,17 @@ Adafruit_NeoPixel strip2 = Adafruit_NeoPixel(NUMPIXELS,D4,NEO_GRB+NEO_KHZ800);
 
 /***************함수 설정*******************/
 
-void ISR_API_Client();
+void CurrnetAPIDataRecieved();
+void HourlyForecastAPIDataRecieved();
+void ParticulateMatterAPIRecieved();
+int getScore(float so2, float co, float o3, float no2, float pm10);
+void setLEDColor(int s);
+void APIDataLCDPrint();
 void displayGettingData();
 void handleLamp();
 void lastMoodLampStateCheck();
 void timerUpdate();
-void ledON();
+void mainLEDON();
 int weatherInfo();
 /******************************************/
 
@@ -95,7 +108,9 @@ int weatherInfo();
 bool moodLampState = false;
 bool lastMoodLampState = true;
 bool timeCheck= true; //10분에 한번씩 API 값 초기화를 위한 변수
-unsigned long t =0;
+unsigned long t =0; //API 값을 받아올때 시간을 측정하기 위한 변수
+
+String moodlampModeState = PARTICULATE_MATTER;
 /*****************************************/
 
 void setup() {
@@ -103,14 +118,20 @@ void setup() {
   Serial.println();
   while(! Serial);
   /***************LCD I2C*******************/
-
-  int cursorPostion = 0;
   lcd.init();
   lcd.backlight();
   lcd.clear();
   lcd.setCursor(0,0);
   lcd.print(" Connecting");
   /******************************************/
+
+  strip1.setBrightness(BRIGHTNESS);
+  strip1.begin();
+  strip1.show();
+
+  strip2.setBrightness(BRIGHTNESS);
+  strip2.begin();
+  strip2.show();
   
   /***************Adafruit io*******************/
   io.connect(); // io.adafruit.com과 MQTT 통신 시작 
@@ -119,10 +140,12 @@ void setup() {
   
   while(io.mqttStatus() < AIO_CONNECTED) {
     Serial.println(io.statusText());
+    mainLEDON();
     if(i%4==0){
       i=1;
       lcd.setCursor(10+i,0);
       lcd.print("   ");
+      delay(500);
     }
     lcd.setCursor(10+i,0);
     i++;
@@ -140,71 +163,114 @@ void setup() {
   lcd.setCursor(0,0);
   lcd.print(" Connnected!");
   delay(1000);
-
-  strip1.setBrightness(BRIGHTNESS);
-  strip1.begin();
-  strip1.show();
-
-  strip2.setBrightness(BRIGHTNESS);
-  strip2.begin();
+  if(moodlampModeState == CURRENT_WEATHER) {
+   CurrnetAPIDataRecieved(); 
+   timerUpdate();
+  }
+  if(moodlampModeState == HOURLY_FORECAST) {
+   HourlyForecastAPIDataRecieved(); 
+  }
+  if(moodlampModeState == PARTICULATE_MATTER){
+    ParticulateMatterAPIRecieved();
+  }
   
-  ISR_API_Client();
-  timerUpdate();
+  
+  
 }
 
 void loop() {
   io.run();
-  /************램프 동작************/
+  /************************************//**램프 동작**//*****************************************/
   if(moodLampState) {
     lastMoodLampStateCheck();
-    if(timeCheck) {
-      t= millis();
-      timeCheck= false;
-    } else if(!timeCheck && millis()-t > 600000){
-      timeCheck = true;
-      ISR_API_Client();
+    /************************현재 날씨 모드**************************/
+    if(moodlampModeState == CURRENT_WEATHER) {
+      if(timeCheck) {
+        t= millis();
+        timeCheck= false;
+      } else if(!timeCheck && millis()-t > 10000){
+        timeCheck = true;
+        CurrnetAPIDataRecieved();
+      }
+      
+      
     }
-    if(timeCheck_timer && APIDataReceived) {
-      t_timer = millis();
-      timeCheck_timer = false;
-    } else if(!timeCheck_timer & millis()-t_timer > 10000) {
-      timeCheck_timer = true;
-      timerUpdate();
+    /*************************************************************/
+
+    /************************내일 날씨 모드*************************/
+    if(moodlampModeState == HOURLY_FORECAST) {
+      if(timeCheck) {
+        t= millis();
+        timeCheck= false;
+      } else if(!timeCheck && millis()-t > 10000){
+        timeCheck = true;
+        HourlyForecastAPIDataRecieved();
+      }
     }
-    if(APIDataReceived) {
-      ledON();
+    /*************************************************************/
+
+    /************************미세 먼지 모드*************************/
+    if(moodlampModeState == PARTICULATE_MATTER) {
+      if(timeCheck) {
+        t= millis();
+        timeCheck= false;
+      } else if(!timeCheck && millis()-t > 600000){
+        timeCheck = true;
+        ParticulateMatterAPIRecieved();
+      }
     }
+ 
+
+    /*************************************************************/
+
+
+    /***********************시간 표시******************************/
+    if(timeCheck_timer && APIDataReceived && (moodlampModeState != HOURLY_FORECAST)) {
+        t_timer = millis();
+        timeCheck_timer = false;
+      } else if(!timeCheck_timer & millis()-t_timer > 10000) {
+        timeCheck_timer = true;
+        timerUpdate();
+    }
+    if(!APIDataReceived) {
+      lcd.clear();
+      lcd.setCursor(0,0);
+    }
+    /**************************************************************/
+
+    /*****************모드에 따라 LED 점등***************************/
     
+    
+    /*************************************************************/
+
     
   } else {
-    lastMoodLampStateCheck();
+    lastMoodLampStateCheck(); //램프가 꺼졌을 때
   }
-  /********************************/
+  /***********************************//*램프동작 끝*//***************************************/
   
   
 }
 
-int weatherInfo(){
-  if((weatherID / 100 == 8) && (weatherID % 100 == 0)) return 0;
-  if((weatherID / 100 == 7) || (weatherID / 100 == 8)) return 1;
+int weatherInfo(){ // 날씨 정보 받아오기
+  if((weatherID / 100 == 8) && (weatherID % 100 == 0)) return 0;//Clear
+  if((weatherID / 100 == 7) || (weatherID / 100 == 8)) return 1;//Clouds
   if((weatherID / 100 == 3)|| (weatherID / 100 == 5)) return 2;//Rain
   if(weatherID / 100 == 6) return 3; //Snow
   if(weatherID / 100 == 2) return 4;  // Thunderstorm
 }
 
-void ledON() {
-  Serial.println(weatherInfo());
-  for(int i=0;i<4;i++) {
-    if(i==weatherInfo()) {
-      strip1.setPixelColor(i,255,255,255);
+void mainLEDON() { //모드에 따라 메인 led의 불빛이 다르다.
+  if((moodlampModeState == CURRENT_WEATHER) || (moodlampModeState == HOURLY_FORECAST)) { 
+    for(int i=0;i<4;i++) {
+      strip1.setPixelColor(i,255,100,0);
+      strip2.setPixelColor(i,255,100,0);
       strip1.show();
-    } else {
-      strip1.setPixelColor(i,0,0,0);
-      strip1.show();
+      strip2.show();
     }
-    if(weatherInfo() == 4) {
-      strip1.setPixelColor(i,255,255,255);
-    }
+  }
+  if(moodlampModeState == PARTICULATE_MATTER) {
+    setLEDColor(particulate_state);
   }
 }
 
@@ -224,7 +290,7 @@ void timerUpdate() {
       lcd.print(curTime);
 }
 
-void lastMoodLampStateCheck() {
+void lastMoodLampStateCheck() { //램프의 상태가 변경되었을때 마지막 상태를 저장하고 램프를 초기화
   if(lastMoodLampState != moodLampState) {
       moodlamp->save(moodLampState);
       lastMoodLampState = moodLampState;
@@ -232,7 +298,7 @@ void lastMoodLampStateCheck() {
       Serial.println(moodLampState);
       if(moodLampState) {
         lcd.clear();
-        ISR_API_Client();
+        CurrnetAPIDataRecieved();
         timerUpdate();
         lcd.backlight();
       } else {
@@ -242,7 +308,7 @@ void lastMoodLampStateCheck() {
   }
 }
 
-void handleLamp(AdafruitIO_Data * data) {
+void handleLamp(AdafruitIO_Data * data) { //Adafruit io 에서 램프 스위치의 상태를 변화시키는 함수
   int state = data->toInt();
   switch(state) {
     case 0: moodLampState = false; break;
@@ -252,17 +318,65 @@ void handleLamp(AdafruitIO_Data * data) {
   Serial.println(data->value());
 }
 
-void displayGettingData() {
+void displayGettingData() { 
   lcd.clear();
   lcd.print("Getting data");
 }
 
+void APIDataLCDPrint() {
+  if(moodlampModeState == CURRENT_WEATHER) {//현재 날씨 모드
+    line1String="";
+    line2String="";
+  
+    line1String+=weatherLocation+", "+weatherCountry;
+    line2String+=weatherDescripton+", T: "+String(temperature);
+  
+    APIDataReceived = true;
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print(line1String);
+    lcd.setCursor(0,1);
+    lcd.print(line2String);
+  }
+
+  if(moodlampModeState == HOURLY_FORECAST) {//시간별 날씨 모드
+    line1String="";
+    line2String="";
+  
+    line1String+=weatherLocation+", "+weatherDate.substring(5,13)+"h";
+    line2String+=weatherDescripton+", T: "+String(temperature);
+  
+    APIDataReceived = true;
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print(line1String);
+    lcd.setCursor(0,1);
+    lcd.print(line2String);
+  }
+
+  if(moodlampModeState == PARTICULATE_MATTER) {//미세 먼지 모드
+    line1String="";
+    line2String="";
+    
+    line1String+=weatherLocation+", "+weatherCountry+" "+String(particulate_state);
+    line2String+=weatherDescripton+", T: "+String(temperature);
+  
+    APIDataReceived = true;
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print(line1String);
+    lcd.setCursor(0,1);
+    lcd.print(line2String);
+    
+  }
+}
+
+
 
 /*
 https://diy-project.tistory.com/73#google_vignette 참조
-타이머 인터럽트 함수(10분에 한번씩 API 정보 호출)
 */
-void ISR_API_Client() {
+void CurrnetAPIDataRecieved() {
   displayGettingData();
   String result; //API 데이터를 모두 긁어와 저장하는 변수
   delay(1000);
@@ -277,14 +391,11 @@ void ISR_API_Client() {
   }
   //클라이언트 API 연결
   while(client.connected() && !client.available()) delay(10);
-  while(client.connected() || client.available()) {
-    char c = client.read();
-    result = result+c;
-  }
+  
+  result = client.readStringUntil('\r');
+  
   //API 정보 가져오기
   client.stop();
-  result.replace('[',' ');
-  result.replace(']',' ');
   Serial.println(result);
 
   char jsonArray [result.length()+1];
@@ -299,9 +410,9 @@ void ISR_API_Client() {
   //JsonArray 형태로 데이터 정리
   String location = root["name"];
   String country = root["sys"]["country"];
-  String description = root["weather"]["description"];
+  String description = root["weather"][0]["description"];
   float _temperature = root["main"]["temp"];
-  int ID = root["weather"]["id"];
+  int ID = root["weather"][0]["id"];
 
 
 
@@ -323,16 +434,210 @@ void ISR_API_Client() {
   String _temp = String(temperature)+"℃";
   temp->save(_temp);
 
-  line1String="";
-  line2String="";
+
+  //lcd 에 API 정보 담기
+
   
-  line1String+=weatherLocation+", "+weatherCountry;
-  line2String+=weatherDescripton+", T: "+String(temperature);
-  APIDataReceived = true;
-  lcd.clear();
-  lcd.setCursor(0,0);
-  lcd.print(line1String);
-  lcd.setCursor(0,1);
-  lcd.print(line2String);
   //데이터 가져오기
+
+  APIDataLCDPrint();
+}
+
+void HourlyForecastAPIDataRecieved() {
+  displayGettingData();
+  String result; //API 데이터를 모두 긁어와 저장하는 변수
+  delay(1000);
+  if(client.connect(servername, 80)) {
+    client.println("GET /data/2.5/forecast?id="+CityID+"&appid="+API_KEY+"&mode=json&units=metric&cnt=11");
+    client.println("Host: api.openweathermap.org");
+    client.println("Connection : close");
+    client.println();
+  } else {
+    Serial.println("client connection failed");
+    Serial.println();
+  }
+
+  //클라이언트 API 연결
+  while(client.connected() && !client.available()) delay(10);
+
+  result = client.readStringUntil('\r');
+
+  Serial.println(result);
+  String result_short = "{\"list\":[{\"main\":{";
+  String result_short_middle;
+  int lastIndex = 0;
+
+  //result_short_middle += result.substring(result.indexOf("\"temp\""),result.indexOf(",",result.indexOf("\"temp\"")))+"},";
+  lastIndex = result.indexOf(",",result.indexOf("\"temp\"")); 
+  //result_short_middle += result.substring(result.indexOf("\"weather\"",lastIndex),result.indexOf("],",lastIndex))+"],";
+  lastIndex = result.indexOf("],",lastIndex);
+  //result_short_middle += result.substring(result.indexOf("\"dt_txt\"",lastIndex),result.indexOf(":00\"},",lastIndex))+"\"},{\"main\":{";
+
+  
+  lastIndex = result.indexOf(":00\"},",lastIndex);
+
+   
+  for(int i=0;i<9;i++) {
+    if(i%2==0) {
+      lastIndex = result.indexOf(",",lastIndex); 
+      lastIndex = result.indexOf("],",lastIndex);
+      lastIndex = result.indexOf(":00\"},",lastIndex);
+    } else {
+    result_short_middle += result.substring(result.indexOf("\"temp\"",lastIndex),result.indexOf(",",result.indexOf("\"temp\"",lastIndex)))+"},";
+    lastIndex = result.indexOf(",",lastIndex); 
+    result_short_middle += result.substring(result.indexOf("\"weather\"",lastIndex),result.indexOf("],",lastIndex))+"],";
+    lastIndex = result.indexOf("],",lastIndex);
+    result_short_middle += result.substring(result.indexOf("\"dt_txt\"",lastIndex),result.indexOf(":00\"},",lastIndex))+"\"},{\"main\":{";
+    lastIndex = result.indexOf(":00\"},",lastIndex);
+    }
+  }
+    result_short_middle += result.substring(result.indexOf("\"temp\"",lastIndex),result.indexOf(",",result.indexOf("\"temp\"",lastIndex)))+"},";
+    lastIndex = result.indexOf(",",lastIndex); 
+    result_short_middle += result.substring(result.indexOf("\"weather\"",lastIndex),result.indexOf("],",lastIndex))+"],";
+    lastIndex = result.indexOf("],",lastIndex);
+    result_short_middle += result.substring(result.indexOf("\"dt_txt\"",lastIndex));
+  
+
+  result_short+=result_short_middle;
+  Serial.println(result_short);
+  
+  //API 정보 가져오기
+  client.stop();
+  
+  char jsonArray [result_short.length()+1];
+  result_short.toCharArray(jsonArray,sizeof(jsonArray));
+  jsonArray[result_short.length()+1] = '\0';
+
+  StaticJsonBuffer<1536> json_buf;
+  JsonObject &root = json_buf.parseObject(jsonArray);
+  if(!root.success()) {
+    Serial.println("parseObject() failed");
+  }
+  //JsonArray 형태로 데이터 정리
+
+  String location = root["city"]["name"];
+  String country = root["country"];
+  String description = root["list"][hourly_forecast_time]["weather"][0]["description"];
+  String date = root["list"][hourly_forecast_time]["dt_txt"];
+  float _temperature = root["list"][hourly_forecast_time]["main"]["temp"];
+  int ID = root["list"][hourly_forecast_time]["weather"][0]["id"];
+  
+
+  weatherLocation = location;
+  weatherCountry = country;
+  weatherDescripton = description;
+  weatherDate = date;
+  temperature = _temperature;
+  weatherID = ID;
+  
+
+  APIDataLCDPrint();
+}
+ 
+void ParticulateMatterAPIRecieved() {
+  displayGettingData();
+  String result; //API 데이터를 모두 긁어와 저장하는 변수
+  
+  delay(1000);
+  if(client.connect(servername_pt, 80)) {
+    client.println("GET /B552584/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty?sidoName=서울&pageNo=1&numOfRows=100&returnType=json&serviceKey="+API_KEY_PT);
+    client.println("Host: apis.data.go.kr");
+    client.println("Connection : close");
+    client.println();
+  } else {
+    Serial.println("client connection failed");
+    Serial.println();
+  }
+
+  //클라이언트 API 연결
+  while(client.connected() && !client.available()) delay(10);
+
+  result = client.readStringUntil('\r');
+
+  Serial.println(result);
+
+
+  String result_short="{";
+  result_short+= result.substring(result.lastIndexOf("\"so2Value\"",result.indexOf("중구")),result.lastIndexOf("\"pm10Flag\"",result.indexOf("중구")))+",";
+  result_short+= result.substring(result.lastIndexOf("\"pm10Value\"",result.indexOf("중구")),result.lastIndexOf("\"khaiGrade\"",result.indexOf("중구")))+",";
+  result_short+= result.substring(result.lastIndexOf("\"no2Value\"",result.indexOf("중구")),result.lastIndexOf("\"stationName\"",result.indexOf("중구")))+",";
+  result_short+= result.substring(result.indexOf("\"o3Value\"",result.indexOf("중구")),result.indexOf(",{",result.indexOf("중구")));
+
+  client.stop();
+
+  char jsonArray [result_short.length()+1];
+  result_short.toCharArray(jsonArray,sizeof(jsonArray));
+  jsonArray[result_short.length()+1] = '\0';
+
+  StaticJsonBuffer<256> json_buf;
+  JsonObject &root = json_buf.parseObject(jsonArray);
+  if(!root.success()) {
+    Serial.println("parseObject() failed");
+  }
+
+  float so2 = String(root["so2Value"]).toFloat();
+  float co = String(root["coValue"]).toFloat();
+  float o3 = String(root["o3Value"]).toFloat();
+  float no2 = String(root["no2Value"]).toFloat();
+  float pm10 = String(root["pm10Value"]).toFloat();
+
+  particulate_state = getScore(so2,co,o3,no2,pm10);
+  CurrnetAPIDataRecieved();
+  APIDataLCDPrint();
+  
+}
+int getScore(float so2, float co, float o3, float no2, float pm10) {
+  int s = -1;
+  if (pm10 >= 151 || o3 >= 0.38 || no2 >= 1.1 || co >= 32 || so2 > 0.6) // 최악
+    s = 7;
+  else if (pm10 >= 101  || o3 >= 0.15 || no2 >= 0.2 || co >= 15 || so2 > 0.15) // 매우 나쁨
+    s = 6;
+  else if (pm10 >= 76 || o3 >= 0.12 || no2 >= 0.13 || co >= 12 || so2 > 0.1) // 상당히 나쁨
+    s = 5;
+  else if (pm10 >= 51  || o3 >= 0.09 || no2 >= 0.06 || co >= 9 || so2 > 0.05) // 나쁨
+    s = 4;
+  else if (pm10 >= 41 || o3 >= 0.06 || no2 >= 0.05 || co >= 5.5 || so2 > 0.04) // 보통
+    s = 3;
+  else if (pm10 >= 31  || o3 >= 0.03 || no2 >= 0.03 || co >= 2 || so2 > 0.02) // 양호
+    s = 2;
+  else if (pm10 >= 16  || o3 >= 0.02 || no2 >= 0.02 || co >= 1 || so2 > 0.01) // 좋음
+    s = 1;
+  else // 최고
+    s = 0;
+  return s;
+}
+
+void setLEDColor(int s) {
+  int color;
+  if (s == 0) {// 최고
+    color = strip1.Color(0, 63, 255);
+    color = strip2.Color(0, 63, 255);
+  } else if (s == 1) { // 좋음
+    color = strip1.Color(0, 127, 255);
+    color = strip2.Color(0, 127, 255);
+  } else if (s == 2) {// 양호
+    color = strip1.Color(0, 255, 255);
+    color = strip2.Color(0, 255, 255);
+  }else if (s == 3){ // 보통
+    color = strip1.Color(0, 255, 63);
+    color = strip2.Color(0, 255, 63);
+  }else if (s == 4) {// 나쁨
+    color = strip1.Color(255, 127, 0);
+    color = strip2.Color(255, 127, 0);
+  }else if (s == 5){ // 상당히 나쁨
+    color = strip1.Color(255, 63, 0);
+    color = strip2.Color(255, 63, 0);
+  }else if (s == 6) {// 매우 나쁨
+    color = strip1.Color(255, 31, 0);
+    color = strip2.Color(255, 31, 0);
+  }else {// 최악
+    color = strip1.Color(255, 0, 0);
+    color = strip2.Color(255, 0, 0);
+  }
+  for (int i = 0; i < 4; i++) {
+    strip1.setPixelColor(i, color);
+    strip2.setPixelColor(i, color);
+  }
+  strip1.show();
+  strip2.show();
 }
