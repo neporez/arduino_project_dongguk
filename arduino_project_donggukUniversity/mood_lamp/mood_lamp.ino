@@ -11,6 +11,8 @@
 #include "config.h" //WiFi 정보, Adafruit io setting, Adafruit io key, API key를 담고있는 헤더
 #include<time.h> //time 라이브러리
 #include<Adafruit_NeoPixel.h> Neopixel 라이브러리
+
+
 /**********************************************************/
 
 /**********************Adafruit feed***********************/
@@ -19,7 +21,6 @@ AdafruitIO_Feed *moodlamp = io.feed("moodlamp"); //Adafruit io On/Off
 AdafruitIO_Feed *temp = io.feed("temperature"); //Adafruit io temperature
 AdafruitIO_Feed *moodlampMode = io.feed("mode"); //Adafruit io moodlampMode
 
-
 /**********************************************************/
 
 /************************Timer 관련 변수***********************/
@@ -27,6 +28,7 @@ char curTime[20];
 unsigned long t_timer=0;
 bool timeCheck_timer= true;
 /**********************************************************/
+
 
 /***********API 관련 변수******************/
 WiFiClient client; //클라이언트 객체 선언
@@ -54,6 +56,9 @@ int hourly_forecast_time = 0;
 
 int particulate_state = 0;
 
+
+char CITY[] = "중구";
+char CITY_ENCODE[120];
 /******************************************/
 
 /**************lcd 출력 관련 변수**************/
@@ -65,7 +70,7 @@ String line1String;
 String line2String;
 
 bool APIDataReceived = false;
-
+bool PT_APIDataReceived = false;
 /*******************************************/
 
 /****************핀 설정********************/
@@ -92,7 +97,7 @@ Adafruit_NeoPixel strip2 = Adafruit_NeoPixel(NUMPIXELS,D4,NEO_GRB+NEO_KHZ800);
 void CurrnetAPIDataRecieved();
 void HourlyForecastAPIDataRecieved();
 void ParticulateMatterAPIRecieved();
-int getScore(float so2, float co, float o3, float no2, float pm10);
+int getScore(float so2, float co, float o3, float no2, float pm10,float pm25);
 void setLEDColor(int s);
 void APIDataLCDPrint();
 void displayGettingData();
@@ -101,6 +106,9 @@ void lastMoodLampStateCheck();
 void timerUpdate();
 void mainLEDON();
 int weatherInfo();
+
+static char hex_digit(char c);
+char *urlencode(char *dst,char *src);
 /******************************************/
 
 
@@ -116,8 +124,13 @@ String moodlampModeState = PARTICULATE_MATTER;
 void setup() {
   Serial.begin(115200); //시리얼 통신 Rate:115200
   Serial.println();
+  urlencode(CITY_ENCODE,CITY);
+
+  
+  
   while(! Serial);
   /***************LCD I2C*******************/
+  
   lcd.init();
   lcd.backlight();
   lcd.clear();
@@ -172,10 +185,12 @@ void setup() {
   }
   if(moodlampModeState == PARTICULATE_MATTER){
     ParticulateMatterAPIRecieved();
+    CurrnetAPIDataRecieved();
+    timerUpdate();
   }
   
   
-  
+ 
 }
 
 void loop() {
@@ -183,6 +198,7 @@ void loop() {
   /************************************//**램프 동작**//*****************************************/
   if(moodLampState) {
     lastMoodLampStateCheck();
+    mainLEDON();
     /************************현재 날씨 모드**************************/
     if(moodlampModeState == CURRENT_WEATHER) {
       if(timeCheck) {
@@ -192,8 +208,6 @@ void loop() {
         timeCheck = true;
         CurrnetAPIDataRecieved();
       }
-      
-      
     }
     /*************************************************************/
 
@@ -214,9 +228,10 @@ void loop() {
       if(timeCheck) {
         t= millis();
         timeCheck= false;
-      } else if(!timeCheck && millis()-t > 600000){
+      } else if(!timeCheck && millis()-t > 10000){
         timeCheck = true;
         ParticulateMatterAPIRecieved();
+        CurrnetAPIDataRecieved();
       }
     }
  
@@ -261,7 +276,7 @@ int weatherInfo(){ // 날씨 정보 받아오기
 }
 
 void mainLEDON() { //모드에 따라 메인 led의 불빛이 다르다.
-  if((moodlampModeState == CURRENT_WEATHER) || (moodlampModeState == HOURLY_FORECAST)) { 
+  if((moodlampModeState == CURRENT_WEATHER) || (moodlampModeState == HOURLY_FORECAST) || (!PT_APIDataReceived)) { 
     for(int i=0;i<4;i++) {
       strip1.setPixelColor(i,255,100,0);
       strip2.setPixelColor(i,255,100,0);
@@ -269,7 +284,7 @@ void mainLEDON() { //모드에 따라 메인 led의 불빛이 다르다.
       strip2.show();
     }
   }
-  if(moodlampModeState == PARTICULATE_MATTER) {
+  if(moodlampModeState == PARTICULATE_MATTER && (PT_APIDataReceived)) {
     setLEDColor(particulate_state);
   }
 }
@@ -537,10 +552,9 @@ void HourlyForecastAPIDataRecieved() {
 void ParticulateMatterAPIRecieved() {
   displayGettingData();
   String result; //API 데이터를 모두 긁어와 저장하는 변수
-  
   delay(1000);
   if(client.connect(servername_pt, 80)) {
-    client.println("GET /B552584/ArpltnInforInqireSvc/getCtprvnRltmMesureDnsty?sidoName=서울&pageNo=1&numOfRows=100&returnType=json&serviceKey="+API_KEY_PT);
+    client.println("GET /B552584/ArpltnInforInqireSvc/getMsrstnAcctoRltmMesureDnsty?stationName="+String(CITY_ENCODE)+"&dataTerm=month&pageNo=1&numOfRows=1&returnType=json&serviceKey="+API_KEY_PT);
     client.println("Host: apis.data.go.kr");
     client.println("Connection : close");
     client.println();
@@ -552,55 +566,47 @@ void ParticulateMatterAPIRecieved() {
   //클라이언트 API 연결
   while(client.connected() && !client.available()) delay(10);
 
-  result = client.readStringUntil('\r');
-
-  Serial.println(result);
-
-
-  String result_short="{";
-  result_short+= result.substring(result.lastIndexOf("\"so2Value\"",result.indexOf("중구")),result.lastIndexOf("\"pm10Flag\"",result.indexOf("중구")))+",";
-  result_short+= result.substring(result.lastIndexOf("\"pm10Value\"",result.indexOf("중구")),result.lastIndexOf("\"khaiGrade\"",result.indexOf("중구")))+",";
-  result_short+= result.substring(result.lastIndexOf("\"no2Value\"",result.indexOf("중구")),result.lastIndexOf("\"stationName\"",result.indexOf("중구")))+",";
-  result_short+= result.substring(result.indexOf("\"o3Value\"",result.indexOf("중구")),result.indexOf(",{",result.indexOf("중구")));
+  result = client.readString();
 
   client.stop();
 
-  char jsonArray [result_short.length()+1];
-  result_short.toCharArray(jsonArray,sizeof(jsonArray));
-  jsonArray[result_short.length()+1] = '\0';
+  char jsonArray [result.length()+1];
+  result.toCharArray(jsonArray,sizeof(jsonArray));
+  jsonArray[result.length()+1] = '\0';
 
-  StaticJsonBuffer<256> json_buf;
+  StaticJsonBuffer<800> json_buf;
   JsonObject &root = json_buf.parseObject(jsonArray);
   if(!root.success()) {
     Serial.println("parseObject() failed");
   }
 
-  float so2 = String(root["so2Value"]).toFloat();
-  float co = String(root["coValue"]).toFloat();
-  float o3 = String(root["o3Value"]).toFloat();
-  float no2 = String(root["no2Value"]).toFloat();
-  float pm10 = String(root["pm10Value"]).toFloat();
+  float so2 = String(root["response"]["body"]["items"][0]["so2Value"]).toFloat();
+  float co = String(root["response"]["body"]["items"][0]["coValue"]).toFloat();
+  float o3 = String(root["response"]["body"]["items"][0]["o3Value"]).toFloat();
+  float no2 = String(root["response"]["body"]["items"][0]["no2Value"]).toFloat();
+  float pm10 = String(root["response"]["body"]["items"][0]["pm10Value"]).toFloat();
+  float pm25 = String(root["response"]["body"]["items"][0]["pm25Value"]).toFloat();
 
-  particulate_state = getScore(so2,co,o3,no2,pm10);
-  CurrnetAPIDataRecieved();
-  APIDataLCDPrint();
+  
+  particulate_state = getScore(so2,co,o3,no2,pm10,pm25);
+  PT_APIDataReceived = true;
   
 }
-int getScore(float so2, float co, float o3, float no2, float pm10) {
+int getScore(float so2, float co, float o3, float no2, float pm10,float pm25) {
   int s = -1;
-  if (pm10 >= 151 || o3 >= 0.38 || no2 >= 1.1 || co >= 32 || so2 > 0.6) // 최악
+  if (pm10 >= 151 || pm25 >= 76 ||  o3 >= 0.38 || no2 >= 1.1 || co >= 32 || so2 > 0.6) // 최악
     s = 7;
-  else if (pm10 >= 101  || o3 >= 0.15 || no2 >= 0.2 || co >= 15 || so2 > 0.15) // 매우 나쁨
+  else if (pm10 >= 101  || pm25 >= 51 || o3 >= 0.15 || no2 >= 0.2 || co >= 15 || so2 > 0.15) // 매우 나쁨
     s = 6;
-  else if (pm10 >= 76 || o3 >= 0.12 || no2 >= 0.13 || co >= 12 || so2 > 0.1) // 상당히 나쁨
+  else if (pm10 >= 76 || pm25 >= 38 || o3 >= 0.12 || no2 >= 0.13 || co >= 12 || so2 > 0.1) // 상당히 나쁨
     s = 5;
-  else if (pm10 >= 51  || o3 >= 0.09 || no2 >= 0.06 || co >= 9 || so2 > 0.05) // 나쁨
+  else if (pm10 >= 51  || pm25 >= 26 || o3 >= 0.09 || no2 >= 0.06 || co >= 9 || so2 > 0.05) // 나쁨
     s = 4;
-  else if (pm10 >= 41 || o3 >= 0.06 || no2 >= 0.05 || co >= 5.5 || so2 > 0.04) // 보통
+  else if (pm10 >= 41 || pm25 >= 21 || o3 >= 0.06 || no2 >= 0.05 || co >= 5.5 || so2 > 0.04) // 보통
     s = 3;
-  else if (pm10 >= 31  || o3 >= 0.03 || no2 >= 0.03 || co >= 2 || so2 > 0.02) // 양호
+  else if (pm10 >= 31  || pm25 >= 16 || o3 >= 0.03 || no2 >= 0.03 || co >= 2 || so2 > 0.02) // 양호
     s = 2;
-  else if (pm10 >= 16  || o3 >= 0.02 || no2 >= 0.02 || co >= 1 || so2 > 0.01) // 좋음
+  else if (pm10 >= 16  || pm25 >= 9 || o3 >= 0.02 || no2 >= 0.02 || co >= 1 || so2 > 0.01) // 좋음
     s = 1;
   else // 최고
     s = 0;
@@ -640,4 +646,22 @@ void setLEDColor(int s) {
   }
   strip1.show();
   strip2.show();
+}
+
+static char hex_digit(char c) {
+  return "0123456789ABCDEF"[c&0x0F];
+}
+
+char *urlencode(char *dst,char *src) {
+  char c, *d = dst;
+  while(c= *src++) {
+    if(strchr(CITY,c)) {
+      *d++ = '%';
+      *d++ = hex_digit(c>>4);
+      c = hex_digit(c);
+    }
+    *d++ = c;
+  }
+  *d = '\0';
+  return dst;
 }
