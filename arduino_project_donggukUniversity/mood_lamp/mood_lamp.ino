@@ -26,7 +26,10 @@ AdafruitIO_Feed *moodlampMode = io.feed("mode"); //Adafruit io moodlampMode
 /************************Timer 관련 변수***********************/
 char curTime[20];
 unsigned long t_timer=0;
+unsigned long tf_timer=0;
 bool timeCheck_timer= true;
+bool timeCheck_timer_flicker = true;
+bool flickerState = false;
 /**********************************************************/
 
 
@@ -38,7 +41,8 @@ char servername_pt[] = "apis.data.go.kr";
 
 
 String CityID = "1835848";//Seoul,KR
-
+char CITY[] = "중구";
+char CITY_ENCODE[120];
 
 String weatherDescripton =""; //관측하고 있는 도시 날씨의 자세한 설명
 String weatherLocation ="";//관측하고 있는 도시
@@ -48,17 +52,14 @@ float temperature;//관측하고 있는 도시의 온도
 int weatherID; //날씨 상태
 
 
-#define CURRENT_WEATHER "current weather"
-#define HOURLY_FORECAST "hourly forecast"
-#define PARTICULATE_MATTER "particulate_matter"
+#define CURRENT_WEATHER 0
+#define HOURLY_FORECAST 1
+#define PARTICULATE_MATTER 2
 
 int hourly_forecast_time = 0;
 
 int particulate_state = 0;
 
-
-char CITY[] = "중구";
-char CITY_ENCODE[120];
 /******************************************/
 
 /**************lcd 출력 관련 변수**************/
@@ -77,7 +78,19 @@ bool PT_APIDataReceived = false;
 LiquidCrystal_I2C lcd(lcdAddress, lcdColumns, lcdRows); //lcd 패널 오브젝트
 int weatherIcon[4] = {D5,D6,D7,D8};//날씨 아이콘 led
 int mainLight[2] = {D3,D4};
+int weatherControl = D5;
+int ForecastNext = D6;
 
+unsigned long t_chat = 0;
+bool chat_Check = false; 
+
+unsigned long lastDebounceTime1;
+int lastButtonState1= HIGH;
+int buttonState1;
+
+unsigned long lastDebounceTime2;
+int lastButtonState2= HIGH;
+int buttonState2;
 /******************************************/
 
 /*****************led 관련 변수****************/
@@ -106,7 +119,7 @@ void lastMoodLampStateCheck();
 void timerUpdate();
 void mainLEDON();
 int weatherInfo();
-
+void weatherIconLEDON();
 static char hex_digit(char c);
 char *urlencode(char *dst,char *src);
 /******************************************/
@@ -116,14 +129,20 @@ char *urlencode(char *dst,char *src);
 bool moodLampState = false;
 bool lastMoodLampState = true;
 bool timeCheck= true; //10분에 한번씩 API 값 초기화를 위한 변수
+
 unsigned long t =0; //API 값을 받아올때 시간을 측정하기 위한 변수
 
-String moodlampModeState = PARTICULATE_MATTER;
+
+int moodlampModeState = PARTICULATE_MATTER;
 /*****************************************/
 
 void setup() {
   Serial.begin(115200); //시리얼 통신 Rate:115200
   Serial.println();
+  
+  pinMode(weatherControl,INPUT);
+  pinMode(ForecastNext,INPUT);
+  
   urlencode(CITY_ENCODE,CITY);
 
   
@@ -179,19 +198,24 @@ void setup() {
   if(moodlampModeState == CURRENT_WEATHER) {
    CurrnetAPIDataRecieved(); 
    timerUpdate();
+   moodlampMode->save("현재 날씨");
   }
   if(moodlampModeState == HOURLY_FORECAST) {
    HourlyForecastAPIDataRecieved(); 
+   moodlampMode->save("시간별 날씨");
   }
   if(moodlampModeState == PARTICULATE_MATTER){
     ParticulateMatterAPIRecieved();
     CurrnetAPIDataRecieved();
     timerUpdate();
+    moodlampMode->save("미세 먼지");
   }
   
   
  
 }
+
+
 
 void loop() {
   io.run();
@@ -199,12 +223,60 @@ void loop() {
   if(moodLampState) {
     lastMoodLampStateCheck();
     mainLEDON();
+
+    if(digitalRead(weatherControl) != lastButtonState1) {
+      lastDebounceTime1 = millis();
+    }
+
+    if((millis()-lastDebounceTime1)> 300) {
+      if(digitalRead(weatherControl)!= buttonState1) {
+        buttonState1 = digitalRead(weatherControl);
+        if(buttonState1 == HIGH) {
+          moodlampModeState++;
+          hourly_forecast_time=0;
+          Serial.println(moodlampModeState);
+          if(moodlampModeState == 3) {
+            moodlampModeState = 0;
+          }
+          switch(moodlampModeState) {
+            case CURRENT_WEATHER:CurrnetAPIDataRecieved();timerUpdate();PT_APIDataReceived=false;break;
+            case HOURLY_FORECAST:HourlyForecastAPIDataRecieved();PT_APIDataReceived=false;break;
+            case PARTICULATE_MATTER:ParticulateMatterAPIRecieved();CurrnetAPIDataRecieved();timerUpdate();break;
+          }
+        }
+      }
+    }
+
+    lastButtonState1 = digitalRead(weatherControl);
+
+    
+    if(digitalRead(ForecastNext) != lastButtonState2) {
+      lastDebounceTime2 = millis();
+    }
+
+    if((millis()-lastDebounceTime2)> 300) {
+      if(digitalRead(ForecastNext)!= buttonState2) {
+        buttonState2 = digitalRead(ForecastNext);
+        if(buttonState2 == HIGH) {
+          hourly_forecast_time++;
+          Serial.println(hourly_forecast_time);
+          if(hourly_forecast_time == 5) {
+            hourly_forecast_time=0;
+          }
+          HourlyForecastAPIDataRecieved();
+        }
+      }
+    }
+
+    lastButtonState2 = digitalRead(ForecastNext);
+
+    
     /************************현재 날씨 모드**************************/
     if(moodlampModeState == CURRENT_WEATHER) {
       if(timeCheck) {
         t= millis();
         timeCheck= false;
-      } else if(!timeCheck && millis()-t > 10000){
+      } else if(!timeCheck && millis()-t > 600000){
         timeCheck = true;
         CurrnetAPIDataRecieved();
       }
@@ -216,7 +288,7 @@ void loop() {
       if(timeCheck) {
         t= millis();
         timeCheck= false;
-      } else if(!timeCheck && millis()-t > 10000){
+      } else if(!timeCheck && millis()-t > 600000){
         timeCheck = true;
         HourlyForecastAPIDataRecieved();
       }
@@ -228,22 +300,25 @@ void loop() {
       if(timeCheck) {
         t= millis();
         timeCheck= false;
-      } else if(!timeCheck && millis()-t > 10000){
+      } else if(!timeCheck && millis()-t > 600000){
         timeCheck = true;
         ParticulateMatterAPIRecieved();
         CurrnetAPIDataRecieved();
       }
     }
- 
-
+    
     /*************************************************************/
+
+    if(APIDataReceived) {
+      weatherIconLEDON();
+    }
 
 
     /***********************시간 표시******************************/
     if(timeCheck_timer && APIDataReceived && (moodlampModeState != HOURLY_FORECAST)) {
         t_timer = millis();
         timeCheck_timer = false;
-      } else if(!timeCheck_timer & millis()-t_timer > 10000) {
+    } else if(!timeCheck_timer & millis()-t_timer > 10000 && (moodlampModeState != HOURLY_FORECAST)) {
         timeCheck_timer = true;
         timerUpdate();
     }
@@ -251,12 +326,23 @@ void loop() {
       lcd.clear();
       lcd.setCursor(0,0);
     }
+    if(timeCheck_timer_flicker && APIDataReceived && (moodlampModeState != HOURLY_FORECAST)) {
+      tf_timer= millis();
+      timeCheck_timer_flicker = false;
+    } else if(!timeCheck_timer_flicker & millis()-tf_timer > 350 && (moodlampModeState != HOURLY_FORECAST)) {
+        timeCheck_timer_flicker = true;
+        if(flickerState) {
+          lcd.setCursor(13,0);
+          lcd.print(":");
+        } else {
+          lcd.setCursor(13,0);
+          lcd.print(" ");
+        }
+        flickerState ^= 1;
+    }
     /**************************************************************/
 
-    /*****************모드에 따라 LED 점등***************************/
     
-    
-    /*************************************************************/
 
     
   } else {
@@ -266,6 +352,26 @@ void loop() {
   
   
 }
+
+
+
+void weatherIconLEDON() {
+  for(int i=0;i<4;i++) {
+    if(weatherInfo() == i) {
+      strip2.setPixelColor(i,255,255,255);
+    } else {
+      strip2.setPixelColor(i,0,0,0);
+    }
+    strip2.show();
+  }
+  if(weatherInfo() == 4) {
+    for(int i=0;i<4;i++) {
+      strip2.setPixelColor(i,255,255,255);
+      strip2.show();
+    }
+  }
+}
+
 
 int weatherInfo(){ // 날씨 정보 받아오기
   if((weatherID / 100 == 8) && (weatherID % 100 == 0)) return 0;//Clear
@@ -279,9 +385,10 @@ void mainLEDON() { //모드에 따라 메인 led의 불빛이 다르다.
   if((moodlampModeState == CURRENT_WEATHER) || (moodlampModeState == HOURLY_FORECAST) || (!PT_APIDataReceived)) { 
     for(int i=0;i<4;i++) {
       strip1.setPixelColor(i,255,100,0);
-      strip2.setPixelColor(i,255,100,0);
+      //strip2.setPixelColor(i,255,100,0);
       strip1.show();
-      strip2.show();
+      //strip2.show();
+      
     }
   }
   if(moodlampModeState == PARTICULATE_MATTER && (PT_APIDataReceived)) {
@@ -300,7 +407,7 @@ void timerUpdate() {
       } else {
         timeIndex =0;
       }
-      sprintf(curTime,"%02d:%02d",tt->tm_hour, tt->tm_min);
+      sprintf(curTime,"%02d %02d",tt->tm_hour, tt->tm_min);
       lcd.setCursor(10+timeIndex,0);
       lcd.print(curTime);
 }
@@ -358,7 +465,7 @@ void APIDataLCDPrint() {
     line1String="";
     line2String="";
   
-    line1String+=weatherLocation+", "+weatherDate.substring(5,13)+"h";
+    line1String+=weatherLocation+"  "+weatherDate.substring(5,13)+"h";
     line2String+=weatherDescripton+", T: "+String(temperature);
   
     APIDataReceived = true;
@@ -373,7 +480,7 @@ void APIDataLCDPrint() {
     line1String="";
     line2String="";
     
-    line1String+=weatherLocation+", "+weatherCountry+" "+String(particulate_state);
+    line1String+=weatherLocation+", "+weatherCountry+" ";
     line2String+=weatherDescripton+", T: "+String(temperature);
   
     APIDataReceived = true;
@@ -394,7 +501,6 @@ https://diy-project.tistory.com/73#google_vignette 참조
 void CurrnetAPIDataRecieved() {
   displayGettingData();
   String result; //API 데이터를 모두 긁어와 저장하는 변수
-  delay(1000);
   if(client.connect(servername, 80)) {
     client.println("GET /data/2.5/weather?id="+CityID+"&units=metric&APPID="+API_KEY);
     client.println("Host: api.openweathermap.org");
@@ -454,14 +560,15 @@ void CurrnetAPIDataRecieved() {
 
   
   //데이터 가져오기
-
+  if(moodlampModeState == CURRENT_WEATHER) {
+    moodlampMode->save("현재 날씨");
+  }
   APIDataLCDPrint();
 }
 
 void HourlyForecastAPIDataRecieved() {
   displayGettingData();
   String result; //API 데이터를 모두 긁어와 저장하는 변수
-  delay(1000);
   if(client.connect(servername, 80)) {
     client.println("GET /data/2.5/forecast?id="+CityID+"&appid="+API_KEY+"&mode=json&units=metric&cnt=11");
     client.println("Host: api.openweathermap.org");
@@ -544,7 +651,10 @@ void HourlyForecastAPIDataRecieved() {
   weatherDate = date;
   temperature = _temperature;
   weatherID = ID;
-  
+
+  String _temp = String(temperature)+"℃";
+  temp->save(_temp);
+  moodlampMode->save("시간별 날씨");
 
   APIDataLCDPrint();
 }
@@ -552,7 +662,6 @@ void HourlyForecastAPIDataRecieved() {
 void ParticulateMatterAPIRecieved() {
   displayGettingData();
   String result; //API 데이터를 모두 긁어와 저장하는 변수
-  delay(1000);
   if(client.connect(servername_pt, 80)) {
     client.println("GET /B552584/ArpltnInforInqireSvc/getMsrstnAcctoRltmMesureDnsty?stationName="+String(CITY_ENCODE)+"&dataTerm=month&pageNo=1&numOfRows=1&returnType=json&serviceKey="+API_KEY_PT);
     client.println("Host: apis.data.go.kr");
@@ -590,7 +699,7 @@ void ParticulateMatterAPIRecieved() {
   
   particulate_state = getScore(so2,co,o3,no2,pm10,pm25);
   PT_APIDataReceived = true;
-  
+  moodlampMode->save("미세 먼지");
 }
 int getScore(float so2, float co, float o3, float no2, float pm10,float pm25) {
   int s = -1;
@@ -617,35 +726,35 @@ void setLEDColor(int s) {
   int color;
   if (s == 0) {// 최고
     color = strip1.Color(0, 63, 255);
-    color = strip2.Color(0, 63, 255);
+    //color = strip2.Color(0, 63, 255);
   } else if (s == 1) { // 좋음
     color = strip1.Color(0, 127, 255);
-    color = strip2.Color(0, 127, 255);
+    //color = strip2.Color(0, 127, 255);
   } else if (s == 2) {// 양호
     color = strip1.Color(0, 255, 255);
-    color = strip2.Color(0, 255, 255);
+    //color = strip2.Color(0, 255, 255);
   }else if (s == 3){ // 보통
     color = strip1.Color(0, 255, 63);
-    color = strip2.Color(0, 255, 63);
+    //color = strip2.Color(0, 255, 63);
   }else if (s == 4) {// 나쁨
     color = strip1.Color(255, 127, 0);
-    color = strip2.Color(255, 127, 0);
+    //color = strip2.Color(255, 127, 0);
   }else if (s == 5){ // 상당히 나쁨
     color = strip1.Color(255, 63, 0);
-    color = strip2.Color(255, 63, 0);
+    //color = strip2.Color(255, 63, 0);
   }else if (s == 6) {// 매우 나쁨
     color = strip1.Color(255, 31, 0);
-    color = strip2.Color(255, 31, 0);
+    //color = strip2.Color(255, 31, 0);
   }else {// 최악
     color = strip1.Color(255, 0, 0);
-    color = strip2.Color(255, 0, 0);
+    //color = strip2.Color(255, 0, 0);
   }
   for (int i = 0; i < 4; i++) {
     strip1.setPixelColor(i, color);
-    strip2.setPixelColor(i, color);
+    //strip2.setPixelColor(i, color);
   }
   strip1.show();
-  strip2.show();
+  //strip2.show();
 }
 
 static char hex_digit(char c) {
