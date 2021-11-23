@@ -27,8 +27,10 @@ AdafruitIO_Feed *remoteControl = io.feed("remoteControl"); //Adafruit io remoteC
 char curTime[20];
 unsigned long t_timer = 0;
 unsigned long tf_timer = 0;
+unsigned long tlcd_timer = 0;
 bool timeCheck_timer = true;
 bool timeCheck_timer_flicker = true;
+bool timeCheck_timer_lcd = true;
 bool flickerState = false;
 /**********************************************************/
 
@@ -62,6 +64,8 @@ String weatherCountry;//관측하고 있는 국가
 String weatherDate[5]; //관측하고 있는 시간
 String forecastTime;
 float temperature;//관측하고 있는 도시의 온도
+float pm10Value;
+float pm25Value;
 int weatherID; //날씨 상태
 
 
@@ -82,6 +86,12 @@ const int lcdRows = 2;
 
 String line1String;
 String line2String;
+String line2Stringtemp;
+
+int line2Strlen;
+int line2StrIndex;
+int line2StrEnd;
+
 
 bool APIDataReceived = false;
 bool PT_APIDataReceived = false;
@@ -89,7 +99,7 @@ bool PT_APIDataReceived = false;
 
 /****************핀 설정********************/
 LiquidCrystal_I2C lcd(lcdAddress, lcdColumns, lcdRows); //lcd 패널 오브젝트
-int weatherIcon[4] = {D5, D6, D7, D8}; //날씨 아이콘 led
+int weatherIcon[5] = {D0 , D5, D6, D7, D8}; //날씨 아이콘 led
 int mainLight[2] = {D3, D4};
 
 /******************************************/
@@ -120,6 +130,7 @@ void handleLampRemoteControl();
 void lastMoodLampStateCheck();
 void timerUpdate();
 void mainLEDON();
+void lcdScrolling();
 void brightnessControl(int brightnessValue);
 void forecastControl(int selectTime);
 int weatherInfo();
@@ -145,6 +156,9 @@ void setup() {
   Serial.println();
   urlencode(CITY_ENCODE, CITY);
 
+  for (int i = 0; i < 5; i++) {
+    pinMode(weatherIcon[i], OUTPUT);
+  }
 
 
   while (! Serial);
@@ -170,20 +184,33 @@ void setup() {
   moodlamp->onMessage(handleLamp);
   remoteControl->onMessage(handleLampRemoteControl);
   int i = 1;
-
+  int j = 0;
   while (io.mqttStatus() < AIO_CONNECTED) {
+    for (int k = 0 ; k < 5; k++) {
+      if (k == j) {
+        digitalWrite(weatherIcon[k], HIGH);
+        Serial.print("weather: ");
+        Serial.println(weatherIcon[k]);
+      } else {
+        digitalWrite(weatherIcon[k], LOW);
+      }
+    }
+    j++;
+    if (j % 5 == 0) j = 0;
     Serial.println(io.statusText());
     mainLEDON();
-    if (i % 4 == 0) {
+    if (i % 4 != 1) {
+      lcd.setCursor(9 + i, 0);
+      lcd.print(".");
+      i++;
+      delay(500);
+    } else {
       i = 1;
       lcd.setCursor(10 + i, 0);
       lcd.print("   ");
       delay(500);
+      i++;
     }
-    lcd.setCursor(10 + i, 0);
-    i++;
-    lcd.print(".");
-    delay(500);
   }
   moodlamp->get();
   remoteControl->get();
@@ -192,6 +219,9 @@ void setup() {
   /******************************************/
   configTime(9 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 
+  for (i = 0 ; i < 4; i++) {
+    digitalWrite(weatherIcon[j], LOW);
+  }
 
   lcd.clear();
   lcd.setCursor(0, 0);
@@ -218,7 +248,7 @@ void loop() {
         } else if (!timeCheck && millis() - t > 600000) {
           timeCheck = true;
           UpdateLastData();
-          mainLEDON();
+
         }
       }
       /*************************************************************/
@@ -231,7 +261,7 @@ void loop() {
         } else if (!timeCheck && millis() - t > 600000) {
           timeCheck = true;
           UpdateLastData();
-          mainLEDON();
+
         }
       }
       /*************************************************************/
@@ -244,15 +274,28 @@ void loop() {
         } else if (!timeCheck && millis() - t > 600000) {
           timeCheck = true;
           UpdateLastData();
-          mainLEDON();
+
         }
       }
       /*************************************************************/
-      /***********************날씨 아이콘 LED**************************/
+
+      /**********************LCD Scrolling****************************/
+
       if (APIDataReceived) {
-        weatherIconLEDON();
+        if (timeCheck_timer_lcd) {
+          tlcd_timer = millis();
+          timeCheck_timer_lcd = false;
+        } else if (!timeCheck_timer_lcd && millis() - tlcd_timer > 200) {
+          timeCheck_timer_lcd = true;
+          lcdScrolling();
+        }
       }
-      /*************************************************************/
+
+
+
+
+      /***************************************************************/
+
       /***********************시간 표시******************************/
       if (timeCheck_timer && APIDataReceived && (moodlampModeState != HOURLY_FORECAST) && (moodlampModeState != HOURLY_FORECAST)) {
         t_timer = millis();
@@ -297,6 +340,36 @@ void loop() {
 
 }
 
+/*
+  const int lcdAddress = 0x27;
+  const int lcdColumns = 16;
+  const int lcdRows = 2;
+
+  String line1String;
+  String line2String;
+  String line2Stringtemp;
+
+  int line2Strlen;
+  int line2StrIndex;
+  int line2StrEnd;
+
+*/
+
+
+
+void lcdScrolling() {
+  if (line2StrIndex == (line2Strlen - lcdColumns)) line2StrIndex = 1;
+  lcd.setCursor(0, 1);
+  if (line2Strlen < line2StrIndex + lcdColumns) {
+    line2StrEnd = line2Strlen;
+  } else {
+    line2StrEnd = line2StrIndex + lcdColumns;
+  }
+  line2Stringtemp = line2String.substring(line2StrIndex, line2StrEnd);
+  lcd.print(line2Stringtemp);
+  line2StrIndex++;
+}
+
 void AllLEDOff() {
   for (int i = 0; i < 4; i++) {
     strip1.setPixelColor(i, 0, 0, 0);
@@ -304,6 +377,9 @@ void AllLEDOff() {
   }
   strip1.show();
   strip2.show();
+  for (int i = 0; i < 5; i++) {
+    digitalWrite(weatherIcon[i], LOW);
+  }
 }
 
 void UpdateLastData() {
@@ -330,24 +406,21 @@ void UpdateLastData() {
     temp->save(_temp);
     moodlampMode->save("Air Pollution");
     hourly_forecast_time = 0;
-
   }
+  mainLEDON();
+  weatherIconLEDON();
+  line2StrIndex = 1;
 }
 
 
 void weatherIconLEDON() {
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 5; i++) {
     if (weatherInfo() == i) {
-      //strip2.setPixelColor(i,255,255,255);
+      digitalWrite(weatherIcon[i], HIGH);
+      Serial.print("weather: ");
+      Serial.println(weatherIcon[i]);
     } else {
-      //strip2.setPixelColor(i,0,0,0);
-    }
-    //strip2.show();
-  }
-  if (weatherInfo() == 4) {
-    for (int i = 0; i < 4; i++) {
-      //strip2.setPixelColor(i,255,255,255);
-      //strip2.show();
+      digitalWrite(weatherIcon[i], LOW);
     }
   }
 }
@@ -632,51 +705,29 @@ void displayGettingData() {
 }
 
 void APIDataLCDPrint() {
+  line1String = "";
+  line2String = "                ";
   if (moodlampModeState == CURRENT_WEATHER) { //현재 날씨 모드
-    line1String = "";
-    line2String = "";
-
     line1String += weatherLocation + ", " + weatherCountry;
     line2String += weatherDescripton + ", T: " + String(temperature);
-
-    APIDataReceived = true;
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print(line1String);
-    lcd.setCursor(0, 1);
-    lcd.print(line2String);
   }
-
   if (moodlampModeState == HOURLY_FORECAST) { //시간별 날씨 모드
-    line1String = "";
-    line2String = "";
-
     line1String += weatherLocation + " " + weatherDate[hourly_forecast_time].substring(5, 13) + "h";
     line2String += weatherDescripton + ", T: " + String(temperature);
-
-    APIDataReceived = true;
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print(line1String);
-    lcd.setCursor(0, 1);
-    lcd.print(line2String);
   }
-
   if (moodlampModeState == PARTICULATE_MATTER) { //미세 먼지 모드
-    line1String = "";
-    line2String = "";
-
     line1String += weatherLocation + ", " + weatherCountry + " ";
-    line2String += weatherDescripton + ", T: " + String(temperature);
-
-    APIDataReceived = true;
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print(line1String);
-    lcd.setCursor(0, 1);
-    lcd.print(line2String);
-
+    line2String += weatherDescripton + ", T: " + String(temperature)+" pm10: "+String(pm10Value)+" pm25: "+String(pm25Value);
   }
+  APIDataReceived = true;
+  int ilen = line2String.length();
+  for (int i = 0;i<ilen-lcdColumns;i++) {
+    line2String+=" ";
+  }
+  line2Strlen = line2String.length();
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(line1String);
 }
 
 
@@ -877,7 +928,9 @@ void ParticulateMatterAPIRecieved() {
   float no2 = String(root["response"]["body"]["items"][0]["no2Value"]).toFloat();
   float pm10 = String(root["response"]["body"]["items"][0]["pm10Value"]).toFloat();
   float pm25 = String(root["response"]["body"]["items"][0]["pm25Value"]).toFloat();
-
+  
+  pm10Value = pm10;
+  pm25Value = pm25;
 
   particulate_state = getScore(so2, co, o3, no2, pm10, pm25);
   PT_APIDataReceived = true;
