@@ -85,11 +85,11 @@ unsigned long t_chat = 0;
 bool chat_Check = false; 
 
 unsigned long lastDebounceTime1;
-int lastButtonState1= HIGH;
+int lastButtonState1= LOW;
 int buttonState1;
 
 unsigned long lastDebounceTime2;
-int lastButtonState2= HIGH;
+int lastButtonState2= LOW;
 int buttonState2;
 /******************************************/
 
@@ -133,7 +133,7 @@ bool timeCheck= true; //10분에 한번씩 API 값 초기화를 위한 변수
 unsigned long t =0; //API 값을 받아올때 시간을 측정하기 위한 변수
 
 
-int moodlampModeState = PARTICULATE_MATTER;
+int moodlampModeState = CURRENT_WEATHER;
 /*****************************************/
 
 void setup() {
@@ -194,21 +194,20 @@ void setup() {
   lcd.clear();
   lcd.setCursor(0,0);
   lcd.print(" Connnected!");
-  delay(1000);
   if(moodlampModeState == CURRENT_WEATHER) {
    CurrnetAPIDataRecieved(); 
    timerUpdate();
-   moodlampMode->save("현재 날씨");
+   //moodlampMode->save("현재 날씨");
   }
   if(moodlampModeState == HOURLY_FORECAST) {
    HourlyForecastAPIDataRecieved(); 
-   moodlampMode->save("시간별 날씨");
+   //moodlampMode->save("시간별 날씨");
   }
   if(moodlampModeState == PARTICULATE_MATTER){
     ParticulateMatterAPIRecieved();
     CurrnetAPIDataRecieved();
     timerUpdate();
-    moodlampMode->save("미세 먼지");
+    //moodlampMode->save("미세 먼지");
   }
   
   
@@ -561,7 +560,7 @@ void CurrnetAPIDataRecieved() {
   
   //데이터 가져오기
   if(moodlampModeState == CURRENT_WEATHER) {
-    moodlampMode->save("현재 날씨");
+    //moodlampMode->save("현재 날씨");
   }
   APIDataLCDPrint();
 }
@@ -654,7 +653,7 @@ void HourlyForecastAPIDataRecieved() {
 
   String _temp = String(temperature)+"℃";
   temp->save(_temp);
-  moodlampMode->save("시간별 날씨");
+  //moodlampMode->save("시간별 날씨");
 
   APIDataLCDPrint();
 }
@@ -699,7 +698,7 @@ void ParticulateMatterAPIRecieved() {
   
   particulate_state = getScore(so2,co,o3,no2,pm10,pm25);
   PT_APIDataReceived = true;
-  moodlampMode->save("미세 먼지");
+  //moodlampMode->save("미세 먼지");
 }
 int getScore(float so2, float co, float o3, float no2, float pm10,float pm25) {
   int s = -1;
