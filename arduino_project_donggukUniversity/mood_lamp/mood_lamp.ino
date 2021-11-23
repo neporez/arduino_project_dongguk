@@ -124,6 +124,7 @@ void brightnessControl(int brightnessValue);
 void forecastControl(int selectTime);
 int weatherInfo();
 void weatherIconLEDON();
+void AllLEDOff();
 void UpdateLastData();
 static char hex_digit(char c);
 char *urlencode(char *dst, char *src);
@@ -209,7 +210,6 @@ void loop() {
     lastMoodLampStateCheck();
 
     if (!SelectMode && !brightnessSelectMode && !hourlyForecastMode) { //모드 선택중이 아니라면 실행
-      mainLEDON();
       /************************현재 날씨 모드**************************/
       if (moodlampModeState == CURRENT_WEATHER) {
         if (timeCheck) {
@@ -218,6 +218,7 @@ void loop() {
         } else if (!timeCheck && millis() - t > 600000) {
           timeCheck = true;
           UpdateLastData();
+          mainLEDON();
         }
       }
       /*************************************************************/
@@ -230,6 +231,7 @@ void loop() {
         } else if (!timeCheck && millis() - t > 600000) {
           timeCheck = true;
           UpdateLastData();
+          mainLEDON();
         }
       }
       /*************************************************************/
@@ -242,6 +244,7 @@ void loop() {
         } else if (!timeCheck && millis() - t > 600000) {
           timeCheck = true;
           UpdateLastData();
+          mainLEDON();
         }
       }
       /*************************************************************/
@@ -292,6 +295,15 @@ void loop() {
   /***********************************//*램프동작 끝*//***************************************/
 
 
+}
+
+void AllLEDOff() {
+  for (int i = 0; i < 4; i++) {
+    strip1.setPixelColor(i, 0, 0, 0);
+    strip2.setPixelColor(i, 0, 0, 0);
+  }
+  strip1.show();
+  strip2.show();
 }
 
 void UpdateLastData() {
@@ -388,10 +400,12 @@ void lastMoodLampStateCheck() { //램프의 상태가 변경되었을때 마지�
     Serial.print("MoodLampState: ");
     Serial.println(moodLampState);
     if (moodLampState) {
+      mainLEDON();
       lcd.clear();
       lcd.backlight();
       UpdateLastData();
     } else {
+      AllLEDOff();
       lcd.clear();
       lcd.noBacklight();
     }
