@@ -498,7 +498,7 @@ void handleLamp(AdafruitIO_Data * data) { //Adafruit io 에서 램프 스위치�
 void handleLampRemoteControl(AdafruitIO_Data * data) {//Adafruit io 에서 리모컨값을 가져와 모드 변환
   Serial.println(String(data->value()));
 
-  if (String(data->value()) == "6" && !SelectMode && !brightnessSelectMode) { // MODE SECELT
+  if (String(data->value()) == "6" && !SelectMode && !brightnessSelectMode  && !hourlyForecastMode) { // MODE SECELT
     SelectMode = true;
     lcd.clear();
     lcd.setCursor(0, 0);
@@ -720,10 +720,7 @@ void APIDataLCDPrint() {
     line2String += weatherDescripton + ", T: " + String(temperature)+" pm10: "+String(pm10Value)+" pm25: "+String(pm25Value);
   }
   APIDataReceived = true;
-  int ilen = line2String.length();
-  for (int i = 0;i<ilen-lcdColumns;i++) {
-    line2String+=" ";
-  }
+  line2String+="                ";
   line2Strlen = line2String.length();
   lcd.clear();
   lcd.setCursor(0, 0);
