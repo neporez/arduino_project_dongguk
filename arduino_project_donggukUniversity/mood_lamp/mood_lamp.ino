@@ -64,8 +64,11 @@ String weatherCountry;//관측하고 있는 국가
 String weatherDate[5]; //관측하고 있는 시간
 String forecastTime;
 float temperature;//관측하고 있는 도시의 온도
-float pm10Value;
-float pm25Value;
+String particulate[6]; //0: so2, 1: co, 2: o3, 3: no2, 4: pm10, 5: pm25
+
+int particulate_grade[6]; //0: so2, 1: co, 2: o3, 3: no2, 4: pm10, 5: pm25
+int maxGrade = 1;
+
 int weatherID; //날씨 상태
 
 
@@ -717,10 +720,40 @@ void APIDataLCDPrint() {
   }
   if (moodlampModeState == PARTICULATE_MATTER) { //미세 먼지 모드
     line1String += weatherLocation + ", " + weatherCountry + " ";
-    line2String += weatherDescripton + ", T: " + String(temperature)+" pm10: "+String(pm10Value)+" pm25: "+String(pm25Value);
+    line2String += weatherDescripton + ", T: " + String(temperature);
+    //0: so2, 1: co, 2: o3, 3: no2, 4: pm10, 5: pm
+    
+    
+    
+    
+    
+    25
+
+    line2String += " pm10: " + particulate[4];
+    for (int k = 0; k < (particulate_grade[4] - 1); k++) {
+      line2String += "!";
+    }
+    line2String += " pm25: " + particulate[5];
+    for (int k = 0; k < (particulate_grade[5] - 1); k++) {
+      line2String += "!";
+    }
+    for (int i = 0; i < 4; i++) {
+      if ((particulate_grade[i] == maxGrade) && (maxGrade != 1)) {
+        switch (i) {
+          case 0 : line2String += " so2: "; break;
+          case 1 : line2String += " co: "; break;
+          case 2 : line2String += " o3: "; break;
+          case 3 : line2String += " no2: "; break;
+        }
+        line2String += particulate[i];
+        for (int k = 0; k < (maxGrade - 1); k++) {
+          line2String += "!";
+        }
+      }
+    }
   }
   APIDataReceived = true;
-  line2String+="                ";
+  line2String += "                ";
   line2Strlen = line2String.length();
   lcd.clear();
   lcd.setCursor(0, 0);
@@ -919,66 +952,55 @@ void ParticulateMatterAPIRecieved() {
     Serial.println("parseObject() failed");
   }
 
-  float so2 = String(root["response"]["body"]["items"][0]["so2Value"]).toFloat();
-  float co = String(root["response"]["body"]["items"][0]["coValue"]).toFloat();
-  float o3 = String(root["response"]["body"]["items"][0]["o3Value"]).toFloat();
-  float no2 = String(root["response"]["body"]["items"][0]["no2Value"]).toFloat();
-  float pm10 = String(root["response"]["body"]["items"][0]["pm10Value"]).toFloat();
-  float pm25 = String(root["response"]["body"]["items"][0]["pm25Value"]).toFloat();
-  
-  pm10Value = pm10;
-  pm25Value = pm25;
+  particulate[0] = String(root["response"]["body"]["items"][0]["so2Value"]);
+  particulate[1] = String(root["response"]["body"]["items"][0]["coValue"]);
+  particulate[2] = String(root["response"]["body"]["items"][0]["o3Value"]);
+  particulate[3] = String(root["response"]["body"]["items"][0]["no2Value"]);
+  particulate[4] = String(root["response"]["body"]["items"][0]["pm10Value"]);
+  particulate[5] = String(root["response"]["body"]["items"][0]["pm25Value"]);
 
-  particulate_state = getScore(so2, co, o3, no2, pm10, pm25);
+
+
+  particulate_grade[0] = String(root["response"]["body"]["items"][0]["so2Grade"]).toInt();
+  particulate_grade[1] = String(root["response"]["body"]["items"][0]["coGrade"]).toInt();
+  particulate_grade[2] = String(root["response"]["body"]["items"][0]["o3Grade"]).toInt();
+  particulate_grade[3] = String(root["response"]["body"]["items"][0]["no2Grade"]).toInt();
+  particulate_grade[4] = String(root["response"]["body"]["items"][0]["pm10Grade"]).toInt();
+  particulate_grade[5] = String(root["response"]["body"]["items"][0]["pm25Grade"]).toInt();
+
+  if (particulate[5] == NULL) {
+    particulate[5] = "0";
+    particulate_grade[5] = 1;
+  }
+
+  //0: so2, 1: co, 2: o3, 3: no2, 4: pm10, 5: pm25
+
+  for (int i = 0; i < 6; i++) {
+    if (maxGrade < particulate_grade[i]) {
+      maxGrade = particulate_grade[i];
+    }
+  }
+
+
+
+  particulate_state = maxGrade;
   PT_APIDataReceived = true;
 
 
 }
-int getScore(float so2, float co, float o3, float no2, float pm10, float pm25) {
-  int s = -1;
-  if (pm10 >= 151 || pm25 >= 76 ||  o3 >= 0.38 || no2 >= 1.1 || co >= 32 || so2 > 0.6) // 최악
-    s = 7;
-  else if (pm10 >= 101  || pm25 >= 51 || o3 >= 0.15 || no2 >= 0.2 || co >= 15 || so2 > 0.15) // 매우 나쁨
-    s = 6;
-  else if (pm10 >= 76 || pm25 >= 38 || o3 >= 0.12 || no2 >= 0.13 || co >= 12 || so2 > 0.1) // 상당히 나쁨
-    s = 5;
-  else if (pm10 >= 51  || pm25 >= 26 || o3 >= 0.09 || no2 >= 0.06 || co >= 9 || so2 > 0.05) // 나쁨
-    s = 4;
-  else if (pm10 >= 41 || pm25 >= 21 || o3 >= 0.06 || no2 >= 0.05 || co >= 5.5 || so2 > 0.04) // 보통
-    s = 3;
-  else if (pm10 >= 31  || pm25 >= 16 || o3 >= 0.03 || no2 >= 0.03 || co >= 2 || so2 > 0.02) // 양호
-    s = 2;
-  else if (pm10 >= 16  || pm25 >= 9 || o3 >= 0.02 || no2 >= 0.02 || co >= 1 || so2 > 0.01) // 좋음
-    s = 1;
-  else // 최고
-    s = 0;
-  return s;
-}
 
 void setLEDColor(int s) {
   int color;
-  if (s == 0) {// 최고
+  if (s == 1) {// 최고
     color = strip1.Color(0, 63, 255);
     color = strip2.Color(0, 63, 255);
-  } else if (s == 1) { // 좋음
-    color = strip1.Color(0, 127, 255);
-    color = strip2.Color(0, 127, 255);
-  } else if (s == 2) {// 양호
-    color = strip1.Color(0, 255, 255);
-    color = strip2.Color(0, 255, 255);
-  } else if (s == 3) { // 보통
+  } else if (s == 2) { // 보통
     color = strip1.Color(0, 255, 63);
     color = strip2.Color(0, 255, 63);
-  } else if (s == 4) {// 나쁨
+  } else if (s == 3) {// 나쁨
     color = strip1.Color(255, 127, 0);
     color = strip2.Color(255, 127, 0);
-  } else if (s == 5) { // 상당히 나쁨
-    color = strip1.Color(255, 63, 0);
-    color = strip2.Color(255, 63, 0);
-  } else if (s == 6) {// 매우 나쁨
-    color = strip1.Color(255, 31, 0);
-    color = strip2.Color(255, 31, 0);
-  } else {// 최악
+  } else if (s == 4) { // 최악
     color = strip1.Color(255, 0, 0);
     color = strip2.Color(255, 0, 0);
   }
