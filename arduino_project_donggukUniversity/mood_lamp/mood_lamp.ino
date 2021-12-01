@@ -152,6 +152,7 @@ bool timeCheck = true; //10분에 한번씩 API 값 초기화를 위한 변수
 unsigned long t = 0; //API 값을 받아올때 시간을 측정하기 위한 변수
 
 int moodlampModeState = CURRENT_WEATHER;
+bool WifiConnect = false;
 /*****************************************/
 
 void setup() {
@@ -215,6 +216,7 @@ void setup() {
       i++;
     }
   }
+  WifiConnect = true;
   moodlamp->get();
   remoteControl->get();
   Serial.println();
@@ -238,6 +240,24 @@ void setup() {
 
 void loop() {
   io.run();
+  if((io.mqttStatus() < AIO_CONNECTED) && WifiConnect) {
+    lcd.clear();
+    lcd.setCursor(0,0);
+    String line1 = "WiFi: "+ String(WIFI_SSID);
+    lcd.print(line1);
+    lcd.setCursor(0,1);
+    lcd.print("Disconnected!");
+    WifiConnect = false;
+  }
+  if((io.mqttStatus() >= AIO_CONNECTED)) {
+    if(!WifiConnect) {
+      lcd.clear();
+      lcd.setCursor(0,0);
+      UpdateLastData();
+    }
+    WifiConnect = true;
+  }
+  if(!WifiConnect) return;
   /************************************//**램프 동작**//*****************************************/
   if (moodLampState) {
     lastMoodLampStateCheck();
@@ -721,13 +741,7 @@ void APIDataLCDPrint() {
   if (moodlampModeState == PARTICULATE_MATTER) { //미세 먼지 모드
     line1String += weatherLocation + ", " + weatherCountry + " ";
     line2String += weatherDescripton + ", T: " + String(temperature);
-    //0: so2, 1: co, 2: o3, 3: no2, 4: pm10, 5: pm
-    
-    
-    
-    
-    
-    25
+    //0: so2, 1: co, 2: o3, 3: no2, 4: pm10, 5: pm25
 
     line2String += " pm10: " + particulate[4];
     for (int k = 0; k < (particulate_grade[4] - 1); k++) {
