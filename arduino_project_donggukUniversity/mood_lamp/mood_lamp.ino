@@ -774,11 +774,6 @@ void APIDataLCDPrint() {
   lcd.print(line1String);
 }
 
-
-
-/*
-  https://diy-project.tistory.com/73#google_vignette 참조
-*/
 void CurrnetAPIDataRecieved() {
   displayGettingData();
   String result; //API 데이터를 모두 긁어와 저장하는 변수
